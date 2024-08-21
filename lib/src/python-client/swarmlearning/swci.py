@@ -109,7 +109,7 @@ class Swci:
             self.__sess.cert = self.__cert
         else:    
             self.__url = "http://%s:%s/exec?cmd="%(swciIp, port)
-            self.__uploadUrl = "http://%s:%s/uploadTaskDef"%(swciIp, port)
+            self.__uploadUrl = "http://%s:%s/uploadTaskDef"%(swciIp, port) 
 
         self.__logger.info('SWCI Url Prefix = ' + self.__url)
         # cache of resultsets of execCmd , to minimize 
