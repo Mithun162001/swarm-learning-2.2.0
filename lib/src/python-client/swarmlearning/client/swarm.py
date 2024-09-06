@@ -49,6 +49,7 @@ class SLPlatforms(IntEnum):
     TF = 1
     KERAS = 2
     PYTORCH = 3
+    HUGGINGFACE = 4
 # Merge Methods supported in SL framework
 class SLMergeMethod(IntEnum):
     mean = 1

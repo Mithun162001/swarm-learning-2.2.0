@@ -16,15 +16,21 @@
 ##################################################################
 # This file is the main entry point for Swarm Learning for Hugging Face Transformers.
 # Users can integrate Swarm framework into their model code by creating an 
-# instance of the SwarmHuggingFaceCallback class and calling its methods 
+# instance of the SwarmCallback class and calling its methods 
 # at different phases of training.
 ##################################################################
 
 from transformers import TrainerCallback
 from swarmlearning.client.swarm import SwarmCallbackBase, SLPlatforms
-from swarm_integration import SwarmIntegration
 
-class SwarmHuggingFaceCallback(SwarmCallbackBase, TrainerCallback):
+# Default Training contract used for learning if not specified by user. 
+# Any update to default contract needs similar modifications 
+# in all applicable ML platforms (TF, PYT, etc)
+DEFAULT_TRAINING_CONTRACT = 'defaultbb.cqdb.sml.hpe'
+
+
+# TODO - Why multiple inheritance ?   We don't do that for other platforms...
+class SwarmCallback(SwarmCallbackBase, TrainerCallback):
     '''
     This is the customized callback class sub-classed from 
     SwarmCallbackBase class and TrainerCallback. It implements 
@@ -35,20 +41,45 @@ class SwarmHuggingFaceCallback(SwarmCallbackBase, TrainerCallback):
         def __init__(self, model):
             self.model = model
 
-    def __init__(self, syncFrequency, minPeers, trainingContract=None, **kwargs):
+    def __init__(self, syncFrequency, minPeers, trainingContract=DEFAULT_TRAINING_CONTRACT, **kwargs):
         '''
         Initializes the Swarm learning parameters and Hugging Face context.
         '''
-        super().__init__(syncFrequency, minPeers, trainingContract, **kwargs)
+        TrainerCallback.__init__(self)
+        SwarmCallbackBase.__init__(self, syncFrequency, minPeers, trainingContract, kwargs)
         self._verifyAndSetPlatformContext(kwargs)
         self._swarmInitialize()
+        
+        # TODO: Check if its applicable and fix it.
+        # lossFunction and lossFunctionArgs requested through swarm callback should match with 
+        # loss function class defined in pyTorch
+        # https://pytorch.org/docs/stable/nn.html#loss-functions
+        self.lossFunction = kwargs.get('lossFunction', None)
+        self.lossFunctionArgs = kwargs.get('lossFunctionArgs', None)
+        
+        # metricFunction and metricFunctionArgs requested through swarm callback should match with 
+        # metric function class defined in torchmetrics.
+        # https://torchmetrics.readthedocs.io/en/stable/all-metrics.html
+        self.metricFunction = kwargs.get('metricFunction', None)
+        self.metricFunctionArgs = kwargs.get('metricFunctionArgs', None)
+        
+        if(self.valData == None):
+            self.logger.info("=============================================================")
+            self.logger.info("WARNING: valData is not available to compute Loss and metrics")
+            self.logger.info("=============================================================")
 
     def on_train_begin(self, args, state, control, **kwargs):
         '''
         Hugging Face specific on_train_begin implementation.
         '''
         self._swarmOnTrainBegin()
-
+    
+    def on_batch_end(self, batch=None):
+        '''
+        Hugging Face specific on_batch_end implementation
+        '''
+        self._swarmOnBatchEnd()
+        
     def on_epoch_end(self, args, state, control, **kwargs):
         '''
         Hugging Face specific on_epoch_end implementation.
@@ -80,6 +111,29 @@ class SwarmHuggingFaceCallback(SwarmCallbackBase, TrainerCallback):
             self._logAndRaiseError("Hugging Face model is None")
         else:
             self.__setMLContext(model=self.model)
+
+    def _getValidationDataForAdaptiveSync(self, valData, valBatchSize):
+        '''
+        Hugging Face specific implementation of abstract method
+        _getValidationDataForAdaptiveSync in SwarmCallbackBase class.
+        '''
+        valGen = validationSteps = valX = valY = valSampleWeight = None
+        
+        if(not valData):
+            #valData is an optional parameter if not available, then performance data won't be supported
+            return valGen, validationSteps, valX, valY, valSampleWeight
+        
+        # TODO - Need to check if it works.. 
+        # No need to unpack valData for pyTorch. 
+        # pyTorch supports only DataLoader object as valData
+        # expecting valdata of type "torch.utils.data.DataLoader"
+        if(not isinstance(valData, torch.utils.data.DataLoader)):
+            self._logAndRaiseError("adsValData type passed is %s, not matching with torch.utils.data.DataLoader" %(type(valData)))
+        
+        # Following return of all Nones is to be in consistency with other ML platforms
+        # valData object will be unpacked during loss/metrics computations
+        return valGen, validationSteps, valX, valY, valSampleWeight
+
 
     def _saveModelWeightsToDict(self):
         '''
@@ -118,6 +172,6 @@ class SwarmHuggingFaceCallback(SwarmCallbackBase, TrainerCallback):
         return valLoss, totalMetrics
 
     def __setMLContext(self, **params):
-        ctx = SwarmHuggingFaceCallback.HuggingFaceContext(params['model'])
+        ctx = SwarmCallback.HuggingFaceContext(params['model'])
         self.logger.debug("Initialized Hugging Face context for Swarm")
         self.mlCtx = ctx
